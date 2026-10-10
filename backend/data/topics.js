@@ -161,4 +161,26 @@ const topics = [
   { title: 'Give a persuasive talk about a community project', category: 'Presentation', active: true },
 ];
 
-export default topics;
+const vocabularyTargetsByCategory = {
+  'Everyday Life': ['routine', 'convenient', 'prepare ahead', 'make time for', 'unwind'],
+  'College & Education': ['curriculum', 'approach', 'retain information', 'critical thinking', 'practical'],
+  'Career & Interviews': ['strengths', 'initiative', 'collaborate', 'experience', 'contribute'],
+  Technology: ['efficient', 'accessible', 'privacy', 'reliable', 'streamline'],
+  'AI & Future': ['innovation', 'automation', 'ethical', 'adapt', 'long-term impact'],
+  Science: ['evidence', 'research', 'observe', 'experiment', 'significant'],
+  Environment: ['conserve', 'sustainable', 'restore', 'reduce reliance', 'long-term'],
+  'Business & Money': ['budget', 'investment', 'profitability', 'affordable', 'financial goal'],
+  Travel: ['destination', 'local culture', 'itinerary', 'explore', 'memorable'],
+  Entertainment: ['performance', 'storyline', 'inspiring', 'audience', 'creative'],
+  'Personal Growth': ['resilience', 'self-aware', 'progress', 'overcome', 'build confidence'],
+  Communication: ['clarify', 'perspective', 'active listening', 'express', 'misunderstanding'],
+  Society: ['community', 'public services', 'inclusive', 'address', 'quality of life'],
+  Workplace: ['collaborate', 'deadline', 'constructive feedback', 'prioritize', 'work-life balance'],
+  'Opinion & Debate': ['perspective', 'evidence', 'counterargument', 'trade-off', 'justify'],
+  Presentation: ['introduce', 'key point', 'illustrate', 'recommend', 'conclusion'],
+};
+
+export default topics.map((topic) => ({
+  ...topic,
+  vocabularyTargets: vocabularyTargetsByCategory[topic.category] || [],
+}));

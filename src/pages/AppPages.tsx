@@ -146,7 +146,9 @@ import {
 type Navigate = (path: string) => void;
 
 const PRACTICE_DURATION_STORAGE_KEY = 'speakora-practice-duration-seconds';
-const PRACTICE_DURATION_OPTIONS_MINUTES = [1, 2, 3] as const;
+const PRACTICE_DURATION_OPTIONS_MINUTES = [5, 10, 15] as const;
+const DEFAULT_PRACTICE_DURATION_SECONDS = 10 * 60;
+const MINIMUM_FEEDBACK_RECORDING_SECONDS = 10;
 
 const tutors = [
 
@@ -850,27 +852,20 @@ function Dashboard({ navigate }: { navigate: Navigate }) {
         return {
           title: 'One quick prompt + feedback',
           detail: `A single ${focus.name.toLowerCase()}-focused answer with instant coaching — in and out in 5 minutes.`,
-          cta: 'Start 5-min practice',
+          cta: 'Start 5-min session',
           path: '/practice',
         };
       case 15:
         return {
           title: 'Practice, then push further',
-          detail: 'Two prompts back to back, plus a short conversation warm-up to apply the feedback.',
+          detail: 'One focused speaking prompt with time to prepare, speak, and get feedback.',
           cta: 'Start 15-min session',
           path: '/practice',
         };
-      case 20:
-        return {
-          title: 'A full coach-led session',
-          detail: 'Practice prompts, an open conversation, and a roleplay scenario to finish strong.',
-          cta: 'Start 20-min session',
-          path: '/conversation',
-        };
       default:
         return {
-          title: 'A prompt and a conversation turn',
-          detail: 'One focused prompt followed by a quick open conversation to keep the momentum.',
+          title: 'A focused speaking session',
+          detail: 'One focused speaking prompt with time to prepare, speak, and get feedback.',
           cta: 'Start 10-min session',
           path: '/practice',
         };
@@ -1186,22 +1181,34 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
   const [error, setError] = useState('');
   const [isRetryAttempt, setIsRetryAttempt] = useState(false);
   const [vocabularyTargets, setVocabularyTargets] = useState<string[]>([]);
+  const [focusMode, setFocusMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [recorderRevision, setRecorderRevision] = useState(0);
   const [requestedDurationSeconds] = useState<number | null>(() => {
     const storedDuration = Number(
       sessionStorage.getItem(PRACTICE_DURATION_STORAGE_KEY)
     );
-    return Number.isFinite(storedDuration) && storedDuration > 0
+    return PRACTICE_DURATION_OPTIONS_MINUTES.some(
+      (minutes) => minutes * 60 === storedDuration
+    )
       ? storedDuration
       : null;
   });
   const [sessionDurationSeconds, setSessionDurationSeconds] = useState<number>(
-    requestedDurationSeconds ?? 60
+    requestedDurationSeconds ?? DEFAULT_PRACTICE_DURATION_SECONDS
   );
   const [remainingSeconds, setRemainingSeconds] = useState(
-    requestedDurationSeconds ?? 60
+    requestedDurationSeconds ?? DEFAULT_PRACTICE_DURATION_SECONDS
   );
+  const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
+  const [timerNow, setTimerNow] = useState(() => Date.now());
+  const [timerFinished, setTimerFinished] = useState(false);
   const remainingSecondsRef = useRef(remainingSeconds);
+  const timerStartedAtRef = useRef<number | null>(null);
+  const timerElapsedSecondsRef = useRef(0);
+  const timerFinishedRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const timerExpiryActionRef = useRef<() => void>(() => {});
   const submitInFlightRef = useRef(false);
   const startedRef = useRef(false);
 
@@ -1231,29 +1238,20 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
     };
   }, []);
 
-  const setTopicDuration = (loadedTopic: SpeakingTopic) => {
-    const topicDuration = loadedTopic.durationSeconds;
-    const hasTopicDuration =
-      typeof topicDuration === 'number' &&
-      Number.isFinite(topicDuration) &&
-      topicDuration > 0;
-    const durationSeconds =
-      requestedDurationSeconds ??
-      (hasTopicDuration
-        ? Math.round(topicDuration)
-        : 60);
-    setSessionDurationSeconds(durationSeconds);
-    remainingSecondsRef.current = durationSeconds;
-    setRemainingSeconds(durationSeconds);
-  };
-
   const selectSessionDuration = (seconds: number) => {
     if (isRecording) return;
     setAudioBlob(null);
     setDuration(0);
     setError('');
     setSessionDurationSeconds(seconds);
-    remainingSecondsRef.current = seconds;
+    timerStartedAtRef.current = null;
+    timerElapsedSecondsRef.current = 0;
+    setTimerStartedAt(null);
+    timerFinishedRef.current = false;
+    setTimerFinished(false);
+    remainingSecondsRef.current = seconds > 0
+      ? seconds
+      : Number.POSITIVE_INFINITY;
     setRemainingSeconds(seconds);
   };
 
@@ -1267,28 +1265,27 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
     }
 
     try {
-      clearLatestSession();
-      clearLatestTranscription();
-      clearLatestAnalysis();
-
       const retryContext = excludeTopicId
         ? null
         : getRetryContext();
 
       if (retryContext) {
-        clearRetryContext();
-
         const { session } = await startSpeakingSession(
           retryContext.topic._id,
           retryContext.retryGroup
         );
 
+        clearLatestSession();
+        clearLatestTranscription();
+        clearLatestAnalysis();
+        clearRetryContext();
         setTopic(retryContext.topic);
-        setTopicDuration(retryContext.topic);
         setLatestTopic(retryContext.topic);
         setLatestSession(session);
         setAudioBlob(null);
         setDuration(0);
+        setRecorderRevision((revision) => revision + 1);
+        setError('');
         setIsRetryAttempt(true);
         return;
       }
@@ -1298,12 +1295,16 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
       const { session } =
         await startSpeakingSession(challenge.topic._id);
 
+      clearLatestSession();
+      clearLatestTranscription();
+      clearLatestAnalysis();
       setTopic(challenge.topic);
-      setTopicDuration(challenge.topic);
       setLatestTopic(challenge.topic);
       setLatestSession(session);
       setAudioBlob(null);
       setDuration(0);
+      setRecorderRevision((revision) => revision + 1);
+      setError('');
       setIsRetryAttempt(false);
     } catch (requestError) {
       setError(
@@ -1334,14 +1335,23 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
       return;
     }
 
-    if (!recording) {
+    if (!recording || recording.size === 0) {
       setError('Please record your response first.');
+      return;
+    }
+
+    if (recordingDuration < MINIMUM_FEEDBACK_RECORDING_SECONDS) {
+      setError(
+        `Please record at least ${MINIMUM_FEEDBACK_RECORDING_SECONDS} seconds before requesting feedback.`
+      );
       return;
     }
 
     submitInFlightRef.current = true;
     setSubmitting(true);
     setError('');
+    timerFinishedRef.current = true;
+    setTimerFinished(true);
 
     try {
       await submitRecording(recording, recordingDuration);
@@ -1364,14 +1374,78 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
   ) => {
     setAudioBlob(blob);
     setDuration(durationSeconds);
-    setError('');
+    setError(
+      durationSeconds < MINIMUM_FEEDBACK_RECORDING_SECONDS
+        ? `Your recording is too short. Record at least ${MINIMUM_FEEDBACK_RECORDING_SECONDS} seconds to unlock feedback.`
+        : ''
+    );
     if (remainingSecondsRef.current === 0) {
       void handleFinish(blob, durationSeconds);
     }
   };
 
+  timerExpiryActionRef.current = () => {
+    if (isRecordingRef.current) {
+      setError('Time is up. Finishing your recording…');
+    } else if (audioBlob?.size) {
+      void handleFinish(audioBlob, duration);
+    } else {
+      setError('Time is up. Your practice session has ended.');
+    }
+  };
+
+  useEffect(() => {
+    if (timerStartedAt === null) return;
+
+    let intervalId: number | undefined;
+
+    const updateSessionClock = () => {
+      const now = Date.now();
+      setTimerNow(now);
+
+      if (timerFinishedRef.current) {
+        if (intervalId !== undefined) window.clearInterval(intervalId);
+        return;
+      }
+
+      if (sessionDurationSeconds === 0) {
+        const elapsedSeconds = timerElapsedSecondsRef.current + Math.max(
+          0,
+          Math.floor((now - timerStartedAt) / 1000)
+        );
+        remainingSecondsRef.current = Number.POSITIVE_INFINITY;
+        setRemainingSeconds((current) =>
+          current === elapsedSeconds ? current : elapsedSeconds
+        );
+        return;
+      }
+
+      const elapsedSeconds = timerElapsedSecondsRef.current + Math.max(
+        0,
+        Math.floor((now - timerStartedAt) / 1000)
+      );
+      const remaining = Math.max(0, sessionDurationSeconds - elapsedSeconds);
+      remainingSecondsRef.current = remaining;
+      setRemainingSeconds((current) => current === remaining ? current : remaining);
+
+      if (remaining === 0) {
+        timerFinishedRef.current = true;
+        setTimerFinished(true);
+        if (intervalId !== undefined) window.clearInterval(intervalId);
+        timerExpiryActionRef.current();
+      }
+    };
+
+    intervalId = window.setInterval(updateSessionClock, 250);
+    updateSessionClock();
+
+    return () => {
+      if (intervalId !== undefined) window.clearInterval(intervalId);
+    };
+  }, [sessionDurationSeconds, timerStartedAt]);
+
   const handleNewTopic = async () => {
-    if (!topic?._id || loadingTopic || submitting) {
+    if (!topic?._id || loadingTopic || submitting || isRecording) {
       return;
     }
 
@@ -1379,20 +1453,25 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
   };
 
   const selectedSeconds = sessionDurationSeconds;
+  const promptVocabularyTargets = topic?.vocabularyTargets?.length
+    ? topic.vocabularyTargets.slice(0, 5)
+    : vocabularyTargets.slice(0, 5);
   const durationLabel = `${Math.floor(selectedSeconds / 60)} minute${selectedSeconds >= 120 ? 's' : ''}`;
-  const timerSeconds = remainingSeconds;
+  const currentSessionElapsed = timerElapsedSecondsRef.current + (
+    timerStartedAt === null
+      ? 0
+      : Math.max(0, Math.floor((timerNow - timerStartedAt) / 1000))
+  );
+  const timerSeconds = sessionDurationSeconds === 0
+    ? currentSessionElapsed
+    : Math.max(0, sessionDurationSeconds - currentSessionElapsed);
   const timerValue = `${String(Math.floor(timerSeconds / 60)).padStart(
     2,
     '0'
   )}:${String(timerSeconds % 60).padStart(2, '0')}`;
-  const durationOptions = [
-    ...(!PRACTICE_DURATION_OPTIONS_MINUTES.some(
-      (minutes) => minutes * 60 === selectedSeconds
-    )
-      ? [selectedSeconds]
-      : []),
-    ...PRACTICE_DURATION_OPTIONS_MINUTES.map((minutes) => minutes * 60),
-  ];
+  const feedbackEligible = Boolean(
+    audioBlob?.size && duration >= MINIMUM_FEEDBACK_RECORDING_SECONDS
+  );
 
   if (loading) {
     return (
@@ -1437,19 +1516,26 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
           <div className="prompt-top">
             <div className="prompt-badges">
               <span className="pill practice-badge-primary">
-                Today's prompt
+                {isRetryAttempt ? 'Retry attempt' : "Today's prompt"}
               </span>
-              <span className="pill practice-badge-skill">Easy</span>
-              <span className="pill practice-badge-category">Environment</span>
-              <span className="pill practice-badge-focus" style={{ background: '#fff', border: '1px solid #dcd5c7', color: '#11181c' }}>Focus mode</span>
+              <span className="pill practice-badge-skill">{topic?.difficulty || 'Easy'}</span>
+              <span className="pill practice-badge-category">{topic?.category || 'General'}</span>
+              <button
+                type="button"
+                className="pill practice-badge-focus"
+                aria-pressed={focusMode}
+                onClick={() => setFocusMode((enabled) => !enabled)}
+              >
+                Focus mode
+              </button>
             </div>
           </div>
           <h2>
-            A change you would make to protect nature
+            {topic?.title || 'Your speaking prompt'}
           </h2>
 
           <p>
-            Take a moment to think, then speak naturally.
+            {topic?.prompt || 'Take a moment to think, then speak naturally.'}
           </p>
 
           <section className="answer-structure" aria-label="Suggested answer structure">
@@ -1461,26 +1547,23 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
             </div>
           </section>
 
-          <div className="practice-word-bank">
-            <div className="word-bank-heading">
-              <span className="eyebrow" style={{ textTransform: 'uppercase' }}>Word bank · Build your vocabulary</span>
-              <span className="word-bank-note" style={{ color: '#514936', fontWeight: 600 }}>0 of 5 used</span>
+          {!focusMode && (
+            <div className="practice-word-bank">
+              <div className="word-bank-heading">
+                <span className="eyebrow" style={{ textTransform: 'uppercase' }}>Word bank · Build your vocabulary</span>
+              </div>
+              <div className="word-bank-tags">
+                {promptVocabularyTargets.map((word) => <span key={word}>{word}</span>)}
+              </div>
+              <p className="word-bank-instruction">Try to use two or three of these.</p>
             </div>
-            <div className="word-bank-tags">
-              <span>conserve</span>
-              <span>sustainable</span>
-              <span>restore</span>
-              <span>reduce reliance</span>
-              <span>long-term</span>
-            </div>
-            <p className="word-bank-instruction">Try to use two or three of these.</p>
-          </div>
+          )}
 
           <div className="prompt-actions">
             <button
               className="button outline practice-another"
               onClick={handleNewTopic}
-              disabled={loadingTopic || submitting}
+              disabled={loadingTopic || submitting || isRecording}
             >
               {loadingTopic ? 'Finding another topic…' : 'Try another topic'}
             </button>
@@ -1505,8 +1588,8 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
             </span>
           </div>
 
-          <div className="practice-duration-options" role="group" aria-label="Session duration">
-            {[60, 120, 180, 0].map((seconds) => (
+          <div className="practice-duration-options" role="group" aria-label="Practice mode and duration">
+            {[...PRACTICE_DURATION_OPTIONS_MINUTES.map((minutes) => minutes * 60), 0].map((seconds) => (
               <button
                 key={seconds}
                 type="button"
@@ -1514,6 +1597,7 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
                 aria-pressed={selectedSeconds === seconds}
                 disabled={isRecording}
                 onClick={() => selectSessionDuration(seconds)}
+                aria-label={seconds === 0 ? 'Open practice, no time limit' : `${seconds / 60} minute timed practice`}
               >
                 {seconds === 0 ? 'Open' : `${seconds / 60} min`}
               </button>
@@ -1522,20 +1606,62 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
 
           <div className={`practice-timer-dial ${isRecording ? 'is-recording' : ''}`} aria-live="off">
             <span className="practice-timer-value">{timerValue}</span>
-            <span className="practice-timer-label">time to speak</span>
+            <span className="practice-timer-label">
+              {sessionDurationSeconds === 0 ? 'elapsed time' : 'time to speak'}
+            </span>
           </div>
 
           <AudioRecorder
             classicAppearance
-            key={sessionDurationSeconds}
-            maxDurationSeconds={sessionDurationSeconds}
+            key={`${sessionDurationSeconds}-${recorderRevision}`}
+            maxDurationSeconds={sessionDurationSeconds || undefined}
+            disabled={timerFinished}
+            stopRequested={timerFinished && isRecording}
             onRecordingComplete={handleRecordingComplete}
-            onCountdownChange={(seconds) => {
-              remainingSecondsRef.current = seconds;
-              setRemainingSeconds(seconds);
+            onRecordingStateChange={(recording) => {
+              isRecordingRef.current = recording;
+              setIsRecording(recording);
+              if (recording) {
+                if (timerStartedAtRef.current === null) {
+                  const startedAt = Date.now();
+                  timerStartedAtRef.current = startedAt;
+                  setTimerStartedAt(startedAt);
+                  setTimerNow(startedAt);
+                }
+                setAudioBlob(null);
+                setDuration(0);
+                setError('');
+              } else if (timerStartedAtRef.current !== null) {
+                const stoppedAt = Date.now();
+                timerElapsedSecondsRef.current += Math.max(
+                  0,
+                  Math.floor((stoppedAt - timerStartedAtRef.current) / 1000)
+                );
+                timerStartedAtRef.current = null;
+                setTimerStartedAt(null);
+                setTimerNow(stoppedAt);
+                const elapsed = timerElapsedSecondsRef.current;
+                if (sessionDurationSeconds > 0) {
+                  const remaining = Math.max(0, sessionDurationSeconds - elapsed);
+                  remainingSecondsRef.current = remaining;
+                  setRemainingSeconds(remaining);
+                } else {
+                  remainingSecondsRef.current = Number.POSITIVE_INFINITY;
+                  setRemainingSeconds(elapsed);
+                }
+              }
             }}
-            onRecordingStateChange={setIsRecording}
             onReset={() => {
+              timerElapsedSecondsRef.current = 0;
+              timerStartedAtRef.current = null;
+              setTimerStartedAt(null);
+              setTimerNow(Date.now());
+              timerFinishedRef.current = false;
+              setTimerFinished(false);
+              remainingSecondsRef.current = sessionDurationSeconds > 0
+                ? sessionDurationSeconds
+                : Number.POSITIVE_INFINITY;
+              setRemainingSeconds(sessionDurationSeconds);
               setAudioBlob(null);
               setDuration(0);
               setError('');
@@ -1550,7 +1676,9 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
           <p className="practice-mic-hint">
             {isRecording
               ? 'Speak naturally — your time is being recorded.'
-              : audioBlob
+              : audioBlob && duration < MINIMUM_FEEDBACK_RECORDING_SECONDS
+                ? `Record for at least ${MINIMUM_FEEDBACK_RECORDING_SECONDS} seconds to unlock feedback.`
+                : audioBlob
                 ? 'Your response is ready for feedback.'
                 : 'Tap the mic to begin'}
             {!isRecording && !audioBlob && <span>Take a breath, then begin.</span>}
@@ -1578,7 +1706,8 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
                 loadingTopic ||
                 submitting ||
                 !topic ||
-                !audioBlob
+                !audioBlob ||
+                !feedbackEligible
               }
             >
               {submitting ? 'Analyzing…' : 'Get my feedback'}
@@ -1586,7 +1715,11 @@ function PracticePage({ navigate }: { navigate: Navigate }) {
             </button>
             <div className="feedback-hints" style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
               <span className="feedback-unlock-note">
-                Unlocks after you speak for at least 10 seconds
+                {audioBlob && !feedbackEligible
+                  ? `Your recording was ${duration} seconds. At least ${MINIMUM_FEEDBACK_RECORDING_SECONDS} seconds are required.`
+                  : feedbackEligible
+                    ? 'Your response is ready for feedback.'
+                    : `Unlocks after you speak for at least ${MINIMUM_FEEDBACK_RECORDING_SECONDS} seconds.`}
               </span>
               <span className="practice-privacy-note">
                 <LockKeyhole size={10} /> Private. Only you can hear this.
@@ -1863,7 +1996,8 @@ function ResultsPage({ navigate }: { navigate: Navigate }) {
   const topGrammarErrors = grammarErrors.slice(0, 3);
   const topVocabularyUpgrades = vocabularyUpgrades.slice(0, 3);
 
-  const improvedAnswer =analysis.improved_answer?.trim() ||transcription.transcript;
+  const improvedAnswer = analysis.improved_answer?.trim()
+    || 'The improved version is unavailable. Please try again.';
 
 
   const scoreLabel =

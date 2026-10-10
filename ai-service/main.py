@@ -163,17 +163,37 @@ def generate_contextual_coaching(
         return None, "Gemini is not configured."
 
     prompt = f"""
-You are a careful English speaking coach. Review the learner's complete
-transcript and return contextual coaching as structured data.
+You are an expert editor helping a learner improve a spoken answer. Rewrite
+the complete transcript as clear, natural, conversational English.
 
-Preserve the learner's meaning, ideas, opinions, and approximate length.
-Correct meaningful grammar and usage problems, improve unnatural phrasing
-only when useful, and make the answer sound natural and fluent in
-conversational English. Do not invent facts, examples, opinions, or
-experiences. Do not make an already-natural sentence more sophisticated.
-Treat possible speech-to-text mistakes as uncertain unless the surrounding
-context makes the intended meaning reasonably clear; never present an
-uncertain ASR interpretation as a confirmed learner mistake.
+Make real corrections wherever the transcript contains an error: fix grammar,
+word choice, malformed phrases, sentence structure, punctuation, and clarity.
+Restructure sentences when that is needed for natural English; do not limit
+yourself to replacing isolated words. In particular, repair phrases that are
+grammatically broken or nonsensical instead of carrying them into the rewrite.
+
+Preserve every meaningful statement, idea, relationship, and detail from the
+speaker, including what examples illustrate or explain. Preserve the speaker's
+topic, names, personal details, opinions, and approximate level of formality.
+Keep every source proposition: when the speaker says that something does,
+provides, or causes something, retain that relationship in the rewrite. Never
+shorten a response by dropping a claim or detail. For example, if a speaker
+says a device saves time, keep that point and do not add that it is inexpensive.
+Do not reduce a sentence about an object's function to merely naming the object;
+retain the stated function or benefit in natural phrasing. When a clause is
+malformed but its claim is clear, reconstruct the claim rather than omitting it
+(for example, correct "the device give me heat" to "the device gives me heat").
+Do not add facts, explanations, examples, reasons, or claims that the learner
+did not give. Interpret likely
+speech-to-text errors only when the surrounding context makes the intended
+phrase clear; otherwise preserve the uncertain meaning without inventing a
+replacement. Do not change correct sentences merely to make them sound more
+advanced. If the transcript is already correct and natural, keep it with only
+useful minimal edits. The improved_answer must be the finished answer itself,
+not advice or a description of changes.
+
+Before returning, compare the rewrite with the transcript. If a clear grammar,
+word-choice, or phrasing problem remains unchanged, revise the answer again.
 
 Return only:
 - improved_answer: a complete meaning-preserving rewrite
@@ -197,6 +217,7 @@ Learner transcript:
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         response_schema=GeminiCoachingResponse,
+                        temperature=0,
                     ),
                 )
                 break
@@ -221,7 +242,7 @@ Learner transcript:
         print(
             f"Gemini contextual coaching unavailable: {type(error).__name__}"
         )
-        return None, "Gemini contextual coaching is unavailable."
+        return None, f"Gemini contextual coaching failed ({type(error).__name__}). Please try again."
 
 
 def apply_contextual_coaching(result, transcript, preferred_language):
@@ -231,9 +252,10 @@ def apply_contextual_coaching(result, transcript, preferred_language):
     )
 
     if coaching is None:
-        result["contextual_coaching_available"] = False
-        result["contextual_coaching_error"] = error
-        return result
+        raise HTTPException(
+            status_code=503,
+            detail=error or "AI rewriting is unavailable. Please try again.",
+        )
 
     result["improved_answer"] = coaching.improved_answer.strip()
     result["grammar_errors"] = [
@@ -285,6 +307,9 @@ def analyze(request: AnalyzeRequest):
             request.transcript,
             request.preferred_language,
         )
+
+    except HTTPException:
+        raise
 
     except Exception as error:
         raise HTTPException(

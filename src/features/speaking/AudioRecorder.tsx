@@ -10,6 +10,8 @@ type AudioRecorderProps = {
   onRecordingStateChange?: (recording: boolean) => void;
   onReset?: () => void;
   onTimeLimitReached?: (hasRecording: boolean) => void;
+  disabled?: boolean;
+  stopRequested?: boolean;
 };
 
 export function AudioRecorder({
@@ -21,6 +23,8 @@ export function AudioRecorder({
   onRecordingStateChange,
   onReset,
   onTimeLimitReached,
+  disabled = false,
+  stopRequested = false,
 }: AudioRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -35,6 +39,9 @@ export function AudioRecorder({
   const segmentStartedAtRef = useRef(0);
   const autoStoppedRef = useRef(false);
   const startingRef = useRef(false);
+  const disabledRef = useRef(disabled);
+  const externalStopRef = useRef(false);
+  disabledRef.current = disabled;
   const reportedRemainingRef = useRef(maxDurationSeconds ?? Number.POSITIVE_INFINITY);
   const callbacksRef = useRef({
     onRecordingComplete,
@@ -85,6 +92,10 @@ export function AudioRecorder({
   };
 
   const stopRecording = () => {
+    if (externalStopRef.current) {
+      autoStoppedRef.current = true;
+    }
+
     if (recording && !paused && segmentStartedAtRef.current) {
       const elapsed = updateElapsedTime();
       elapsedMillisecondsRef.current = Math.min(elapsed, limitSeconds * 1000);
@@ -96,7 +107,7 @@ export function AudioRecorder({
       secondsRef.current = totalSeconds;
       setSeconds(totalSeconds);
       const remaining = Math.max(limitSeconds - totalSeconds, 0);
-      if (remaining !== reportedRemainingRef.current) {
+      if (!externalStopRef.current && remaining !== reportedRemainingRef.current) {
         reportedRemainingRef.current = remaining;
         callbacksRef.current.onCountdownChange?.(remaining);
       }
@@ -113,8 +124,11 @@ export function AudioRecorder({
     callbacksRef.current.onRecordingStateChange?.(false);
   };
 
+  const stopRecordingRef = useRef(stopRecording);
+  stopRecordingRef.current = stopRecording;
+
   const startRecording = async () => {
-    if (startingRef.current || recording) return;
+    if (disabledRef.current || startingRef.current || recording) return;
     if (autoStoppedRef.current && secondsRef.current >= limitSeconds) {
       return;
     }
@@ -122,6 +136,10 @@ export function AudioRecorder({
     setError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (disabledRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
       chunksRef.current = [];
 
@@ -153,6 +171,7 @@ export function AudioRecorder({
       secondsRef.current = 0;
       reportedRemainingRef.current = limitSeconds;
       autoStoppedRef.current = false;
+      externalStopRef.current = false;
       setRecording(true);
       setPaused(false);
       setSeconds(0);
@@ -167,6 +186,13 @@ export function AudioRecorder({
       startingRef.current = false;
     }
   };
+
+  useEffect(() => {
+    if (stopRequested && recording) {
+      externalStopRef.current = true;
+      stopRecordingRef.current();
+    }
+  }, [stopRequested, recording]);
 
   const togglePause = () => {
     const recorder = mediaRecorderRef.current;
@@ -197,6 +223,7 @@ export function AudioRecorder({
     segmentStartedAtRef.current = 0;
     secondsRef.current = 0;
     autoStoppedRef.current = false;
+    externalStopRef.current = false;
     reportedRemainingRef.current = limitSeconds;
     setSeconds(0);
     setError('');
@@ -311,6 +338,7 @@ export function AudioRecorder({
             className={`record-button ${recording ? 'recording' : ''}`}
             onClick={() => (recording ? stopRecording() : startRecording())}
             aria-label={recording ? 'Stop recording' : 'Start recording'}
+            disabled={disabled && !recording}
           >
             {recording ? <Square size={15} fill="currentColor" /> : <Mic size={20} />}
           </button>

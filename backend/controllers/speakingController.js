@@ -373,9 +373,12 @@ export async function submitSpeakingSession(req, res) {
     );
 
     if (analysis.status !== 'complete') {
-      return res.status(200).json({
-        session,
-        analysis,
+      await SpeakingSession.updateOne(
+        { _id: session._id, status: 'submitted' },
+        { $set: { status: 'started' } }
+      );
+      return res.status(503).json({
+        message: analysis.message || 'AI rewriting is unavailable. Please try again.',
       });
     }
 
@@ -714,6 +717,12 @@ export async function analyzeSpeaking(req, res) {
       },
       preferredLanguage
     );
+
+    if (result.status !== 'complete') {
+      return res.status(503).json({
+        message: result.message || 'AI rewriting is unavailable. Please try again.',
+      });
+    }
 
     return res.json(result);
   } catch (error) {

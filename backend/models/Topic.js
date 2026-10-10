@@ -7,6 +7,7 @@ const topicSchema = new mongoose.Schema(
     difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], default: 'Easy' },
     durationSeconds: { type: Number, default: 60, min: 15 },
     category: { type: String, default: 'General' },
+    vocabularyTargets: { type: [String], default: [] },
     active: { type: Boolean, default: true },
   },
   { timestamps: true }

@@ -337,6 +337,24 @@
   color: #6d6048;
 }
 
+.practice-session-page .practice-badge-focus {
+  border: 1px solid #dcd5c7;
+  background: #fff;
+  color: #11181c;
+  cursor: pointer;
+}
+
+.practice-session-page .practice-badge-focus[aria-pressed='true'] {
+  border-color: #193b3c;
+  background: #193b3c;
+  color: #fff;
+}
+
+.practice-session-page .practice-badge-focus:focus-visible {
+  outline: 2px solid #287c72;
+  outline-offset: 2px;
+}
+
 .practice-session-page .prompt-card h2 {
   margin: 18px 0 10px;
   font-size: clamp(24px, 2.5vw, 32px);

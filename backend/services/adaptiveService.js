@@ -17,7 +17,14 @@ async function ensureTopicsExist() {
     topics.map((topic) => ({
       updateOne: {
         filter: { title: topic.title },
-        update: { $setOnInsert: topic },
+        update: {
+          $setOnInsert: {
+            title: topic.title,
+            category: topic.category,
+            active: topic.active,
+          },
+          $set: { vocabularyTargets: topic.vocabularyTargets },
+        },
         upsert: true,
       },
     }))

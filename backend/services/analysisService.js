@@ -35,6 +35,17 @@ export async function analyzeSpeakingSession(
       );
     }
 
+    if (payload.contextual_coaching_available === false) {
+      throw new Error(
+        payload.contextual_coaching_error ||
+          'AI rewriting is unavailable. Please try again.'
+      );
+    }
+
+    if (typeof payload.improved_answer !== 'string' || !payload.improved_answer.trim()) {
+      throw new Error('AI did not return an improved answer. Please try again.');
+    }
+
     const vocabularyUpgrades = Array.isArray(
       payload.vocabulary_upgrades
     )

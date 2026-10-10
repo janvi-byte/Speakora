@@ -134,7 +134,7 @@ export async function submitRecording(
     improved_answer:
       result.analysis.improved_answer ??
       result.analysis.improvedAnswer ??
-      transcription.transcript,
+      '',
     feedback: result.analysis.feedback ?? [],
     strengths: result.analysis.strengths ?? [],
     vocabularySummary: result.vocabulary,
