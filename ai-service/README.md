@@ -12,9 +12,11 @@ From the `ai-service/` directory:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+source .venv/bin/activate   # Windows may use .venv\Scripts\python.exe directly
+python -m pip install -r requirements.txt
 ```
+
+On Windows, the commands below can also use `.venv\Scripts\python.exe` directly, without activating the environment.
 
 ## Configuration
 
@@ -34,14 +36,16 @@ cp .env.example .env
 
 ## Running
 
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+```cmd
+run.cmd --reload
 ```
 
-Or directly:
+For a normal run, omit `--reload`. The launcher always invokes Uvicorn with the service's `.venv` Python interpreter.
+
+On other platforms, activate `.venv` before running:
 
 ```bash
-python main.py
+python -m uvicorn main:app --host 0.0.0.0 --port 8001
 ```
 
 The API documentation is available at `http://localhost:8001/docs` once running.

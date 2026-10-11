@@ -106,22 +106,26 @@ export async function loginWithGoogle(req, res, next) {
     let user = await User.findOne({ googleSubjectId: payload.sub });
 
     if (!user) {
-      const existingLocalUser = await User.findOne({ email: normalizedEmail });
+      const existingLocalUser = await User.findOne({ email: normalizedEmail }).select('+password');
       if (existingLocalUser) {
-        return res.status(409).json({
-          message: 'An account with this email already exists. Log in with your existing credentials.',
+        existingLocalUser.googleSubjectId = payload.sub;
+        existingLocalUser.authProvider = existingLocalUser.password ? 'both' : 'google';
+        existingLocalUser.emailVerified = true;
+        if (!existingLocalUser.avatarUrl && payload.picture) {
+          existingLocalUser.avatarUrl = payload.picture;
+        }
+        user = await existingLocalUser.save();
+      } else {
+        user = await User.create({
+          name: payload.name?.trim() || normalizedEmail,
+          email: normalizedEmail,
+          authProvider: 'google',
+          googleSubjectId: payload.sub,
+          emailVerified: true,
+          avatarUrl: payload.picture,
         });
+        await Progress.create({ user: user._id });
       }
-
-      user = await User.create({
-        name: payload.name?.trim() || normalizedEmail,
-        email: normalizedEmail,
-        authProvider: 'google',
-        googleSubjectId: payload.sub,
-        emailVerified: true,
-        avatarUrl: payload.picture,
-      });
-      await Progress.create({ user: user._id });
     }
 
     return res.json({
@@ -135,4 +139,33 @@ export async function loginWithGoogle(req, res, next) {
 
 export async function getProfile(req, res) {
   res.json({ user: serializeUser(req.user) });
+}
+
+
+export async function updateProfile(req, res, next) {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+    if (!name) {
+      return res.status(400).json({ message: 'Name is required.' });
+    }
+
+    if (name.length > 80) {
+      return res.status(400).json({ message: 'Name must be 80 characters or fewer.' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: { name } },
+      { new: true, runValidators: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: 'Profile not found.' });
+    }
+
+    return res.json({ user: serializeUser(user) });
+  } catch (error) {
+    return next(error);
+  }
 }

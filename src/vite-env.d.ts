@@ -11,7 +11,16 @@ interface GoogleIdentityConfiguration {
 
 interface GoogleIdentityClient {
   initialize(configuration: GoogleIdentityConfiguration): void;
-  prompt(): void;
+  renderButton(
+    parent: HTMLElement,
+    configuration: {
+      theme: 'outline';
+      size: 'large';
+      text: 'continue_with';
+      shape: 'rectangular';
+      width: number;
+    }
+  ): void;
 }
 
 interface GoogleIdentityAccounts {

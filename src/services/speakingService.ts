@@ -151,6 +151,7 @@ export type SpeakingTopic = {
   category?: string;
   difficulty?: string;
   durationSeconds?: number;
+  vocabularyTargets?: string[];
 };
 
 export type RandomTopicResponse = {
