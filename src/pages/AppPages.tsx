@@ -5002,20 +5002,31 @@ function AuthPage({
   const [googleReady, setGoogleReady] = useState(false);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   const googleScriptId = 'google-identity-services';
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!googleClientId) {
+      setError('Google sign-in is not configured. Please use email and password.');
       return;
     }
 
+    let active = true;
+    let script: HTMLScriptElement | null = null;
+
     const initializeGoogle = () => {
-      if (!window.google?.accounts.id) {
+      const googleIdentity = window.google?.accounts.id;
+      const buttonHost = googleButtonRef.current;
+      if (!googleIdentity || !buttonHost) {
         return;
       }
 
-      window.google.accounts.id.initialize({
+      googleIdentity.initialize({
         client_id: googleClientId,
         callback: async (response) => {
+          if (!response.credential) {
+            setError('Google did not return a sign-in credential. Please try again.');
+            return;
+          }
           setError('');
           setSubmitting(true);
           try {
@@ -5032,25 +5043,48 @@ function AuthPage({
           }
         },
       });
-      setGoogleReady(true);
+      buttonHost.replaceChildren();
+      googleIdentity.renderButton(buttonHost, {
+        theme: 'outline',
+        size: 'large',
+        text: 'continue_with',
+        shape: 'rectangular',
+        width: Math.floor(buttonHost.getBoundingClientRect().width) || 320,
+      });
+      if (active) setGoogleReady(true);
     };
 
     const existingScript = document.getElementById(googleScriptId);
     if (existingScript) {
-      initializeGoogle();
-      return;
+      script = existingScript as HTMLScriptElement;
+      if (window.google?.accounts.id) {
+        initializeGoogle();
+      } else {
+        script.addEventListener('load', initializeGoogle, { once: true });
+        script.addEventListener('error', handleGoogleScriptError, { once: true });
+      }
+    } else {
+      script = document.createElement('script');
+      script.id = googleScriptId;
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.addEventListener('load', initializeGoogle, { once: true });
+      script.addEventListener('error', handleGoogleScriptError, { once: true });
+      document.head.appendChild(script);
     }
 
-    const script = document.createElement('script');
-    script.id = googleScriptId;
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = initializeGoogle;
-    script.onerror = () => {
-      setError('Unable to load Google authentication. Please use email and password.');
+    function handleGoogleScriptError() {
+      if (active) {
+        setError('Unable to load Google authentication. Please use email and password.');
+      }
+    }
+
+    return () => {
+      active = false;
+      script?.removeEventListener('load', initializeGoogle);
+      script?.removeEventListener('error', handleGoogleScriptError);
     };
-    document.head.appendChild(script);
   }, [googleClientId, loginWithGoogle, navigate, signup]);
 
   const handleSubmit = async (
@@ -5369,22 +5403,26 @@ function AuthPage({
 
         </div>
 
-        <button
+        <div
           className="social-button"
-          type="button"
-          disabled={submitting || !googleReady}
           aria-busy={submitting}
-          onClick={() => {
-            setError('');
-            if (!googleReady || !window.google?.accounts.id) {
-              setError('Google authentication is not ready. Please try again.');
-              return;
-            }
-            window.google.accounts.id.prompt();
+          style={{
+            padding: 0,
+            border: 0,
+            background: 'transparent',
+            pointerEvents: submitting ? 'none' : undefined,
+            opacity: submitting ? 0.65 : undefined,
           }}
         >
-          {submitting ? 'Please wait…' : 'Continue with Google'}
-        </button>
+          <div
+            ref={googleButtonRef}
+            aria-label="Continue with Google"
+            aria-live="polite"
+            style={{ width: '100%', minHeight: 40, display: 'grid', placeItems: 'center' }}
+          >
+            {!googleReady && 'Loading Google sign-in…'}
+          </div>
+        </div>
 
         <p className="auth-switch">
 

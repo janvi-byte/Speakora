@@ -106,22 +106,26 @@ export async function loginWithGoogle(req, res, next) {
     let user = await User.findOne({ googleSubjectId: payload.sub });
 
     if (!user) {
-      const existingLocalUser = await User.findOne({ email: normalizedEmail });
+      const existingLocalUser = await User.findOne({ email: normalizedEmail }).select('+password');
       if (existingLocalUser) {
-        return res.status(409).json({
-          message: 'An account with this email already exists. Log in with your existing credentials.',
+        existingLocalUser.googleSubjectId = payload.sub;
+        existingLocalUser.authProvider = existingLocalUser.password ? 'both' : 'google';
+        existingLocalUser.emailVerified = true;
+        if (!existingLocalUser.avatarUrl && payload.picture) {
+          existingLocalUser.avatarUrl = payload.picture;
+        }
+        user = await existingLocalUser.save();
+      } else {
+        user = await User.create({
+          name: payload.name?.trim() || normalizedEmail,
+          email: normalizedEmail,
+          authProvider: 'google',
+          googleSubjectId: payload.sub,
+          emailVerified: true,
+          avatarUrl: payload.picture,
         });
+        await Progress.create({ user: user._id });
       }
-
-      user = await User.create({
-        name: payload.name?.trim() || normalizedEmail,
-        email: normalizedEmail,
-        authProvider: 'google',
-        googleSubjectId: payload.sub,
-        emailVerified: true,
-        avatarUrl: payload.picture,
-      });
-      await Progress.create({ user: user._id });
     }
 
     return res.json({
